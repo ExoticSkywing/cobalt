@@ -22,8 +22,28 @@ const c = {
     }
 }
 
+function checkAvailability(info, id) {
+    if (!info) return { error: 'ErrorCantConnectToServiceAPI' };
+    if (info.playability_status.status !== 'OK') return { error: 'ErrorYTUnavailable' };
+    if (info.basic_info.is_live) return { error: 'ErrorLiveVideo' };
+    if (info.basic_info.id !== id) {
+        return {
+            error: 'ErrorCantConnectToServiceAPI',
+            critical: true
+        }
+    }
+    return "ok"
+}
+
+function joinFormats(orig, newf) {
+    orig.streaming_data.adaptive_formats = orig.streaming_data.adaptive_formats.concat(newf.streaming_data.adaptive_formats);
+    orig.streaming_data.formats = orig.streaming_data.formats.concat(newf.streaming_data.formats);
+}
+
 export default async function(o) {
-    let info, isDubbed, quality = o.quality === "max" ? "9000" : o.quality; //set quality 9000(p) to be interpreted as max
+    let info, info_web, info_android, info_ytmusic, info_ytstudio,
+        isDubbed,
+        quality = o.quality === "max" ? "9000" : o.quality; //set quality 9000(p) to be interpreted as max
     function qual(i) {
         if (!i.quality_label) {
             return;
@@ -33,15 +53,49 @@ export default async function(o) {
     }
 
     try {
-        info = await yt.getBasicInfo(o.id, 'WEB');
-    } catch (e) {
+        info_web = await yt.getBasicInfo(o.id, 'WEB');
+        info_android = await yt.getBasicInfo(o.id, 'ANDROID');
+        info_ytmusic = await yt.getBasicInfo(o.id, 'YTMUSIC_ANDROID');
+        info_ytstudio = await yt.getBasicInfo(o.id, 'YTSTUDIO_ANDROID');
+    } catch {
         return { error: 'ErrorCantConnectToServiceAPI' };
     }
+    let check_android = checkAvailability(info_android, o.id),
+        check_ytmusic = checkAvailability(info_ytmusic, o.id),
+        check_ytstudio = checkAvailability(info_ytstudio, o.id),
+        check_web = checkAvailability(info_web, o.id);
 
-    if (!info) return { error: 'ErrorCantConnectToServiceAPI' };
-
-    if (info.playability_status.status !== 'OK') return { error: 'ErrorYTUnavailable' };
-    if (info.basic_info.is_live) return { error: 'ErrorLiveVideo' };
+    // check if a miracle happened and android client suddenly returned the video
+    if (check_android === "ok") {
+        info = info_android;
+    }
+    // ytstudio client is second, it almost always returns h264 videos,
+    // aka most commonly used format
+    if (check_ytstudio === "ok") {
+        if (!info) {
+            info = info_ytstudio;
+        } else {
+            joinFormats(info, info_ytstudio)
+        }
+    }
+    // ytmusic comes third, it's more likely to return other formats,
+    // but not for all videos
+    if (check_ytmusic === "ok") {
+        if (!info) {
+            info = info_ytmusic;
+        } else {
+            joinFormats(info, info_ytmusic)
+        }
+    }
+    // fall back to slow and improperly used web client,
+    // if all else fails
+    if (!info && check_web === "ok") {
+        info = info_web;
+    }
+    // return the web error if even that one failed
+    if (check_web !== "ok") {
+        return check_web
+    }
 
     let bestQuality, hasAudio;
 
@@ -88,12 +142,6 @@ export default async function(o) {
         author: fileMetadata.artist,
         youtubeDubName: isDubbed ? o.dubLang : false
     }
-
-    if (filenameAttributes.title === "Video Not Available" && filenameAttributes.author === "YouTube Viewers")
-        return {
-            error: 'ErrorCantConnectToServiceAPI',
-            critical: true
-        }
 
     if (hasAudio && o.isAudioOnly) return {
         type: "render",
