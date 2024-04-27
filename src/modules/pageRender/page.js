@@ -578,8 +578,8 @@ export default function(obj) {
         <div id="popup-backdrop" onclick="hideAllPopups()"></div>
         <div id="home" style="visibility:hidden">
             ${urgentNotice({
-                emoji: "🔒",
-                text: t("UpdateEncryption"),
+                emoji: "😿",
+                text: t("TemporaryIssues"),
                 visible: true,
                 action: "popup('about', 1, 'changelog')"
             })}
